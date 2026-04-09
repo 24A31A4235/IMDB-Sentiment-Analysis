@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+venv/
+*.zip
+
+# Node
+node_modules/
+dist/
+.DS_Store
+
+# Model files (too large for GitHub)
+my-imdb-model/

@@ -1,36 +1,29 @@
 # 🎬 IMDB Sentiment Analysis
 
-A full-stack ML web app that classifies movie reviews as Positive or Negative.
+A simple ML web service that classifies movie reviews as Positive or Negative.
 
 ## 🔥 Tech Stack
-- **Model:** DistilBERT (Hugging Face Transformers)
-- **Dataset:** IMDB 50k reviews
+- **Model:** DistilBERT (Hugging Face Transformers) — `distilbert-base-uncased-finetuned-sst-2-english`
 - **Backend:** FastAPI (Python)
-- **Frontend:** React + Vite
-- **Accuracy:** 93%+
+- **Dataset:** IMDB 50k reviews
 
 ## 🚀 How to Run
-
-### Backend
-cd IMDB_Project
-pip install fastapi uvicorn transformers torch
+```bash
+pip install -r requirements.txt
 python -m uvicorn app:app --reload
-
-### Frontend
-cd IMDB_Project/sentiment-app
-npm install
-npm run dev
-
-Open localhost:5173 in browser.
+```
+Then send a review to `http://127.0.0.1:8000/predict` with JSON `{"text": "The movie was great!"}`.
 
 ## 📊 Features
 - Real-time sentiment prediction
 - Confidence score with temperature scaling
-- Confidence bar visualization
 - Very Strong / Strong / Moderate / Weak interpretation
 
 ## 🧠 Model Details
-- Base model: distilbert-base-uncased-finetuned-sst-2-english
-- Fine-tuned on IMDB dataset (25k train, 25k test)
+- Fine-tuned on IMDB (25k train, 25k test)
 - Accuracy: 93%+
-- Temperature scaling applied for realistic confidence scores
+- Temperature scaling (T=2.5) applied for realistic confidence scores
+
+## 📡 API
+- `POST /predict` — body `{"text": "..."}`, returns `{"label": "POSITIVE", "score": 92.4, "interpretation": "Very strong"}`
+- `GET /` — health check, returns `{"status": "running"}`

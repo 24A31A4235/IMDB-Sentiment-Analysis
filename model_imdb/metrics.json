@@ -1,0 +1,22 @@
+{
+  "train_size": 3000,
+  "val_size": 1000,
+  "test_size": 2000,
+  "epochs": 2.0,
+  "max_len": 128,
+  "frozen_layers": 4,
+  "trainable_params_m": 14.8,
+  "accuracy": 0.8575,
+  "f1_weighted": 0.8575,
+  "confusion_matrix": [
+    [
+      856,
+      144
+    ],
+    [
+      141,
+      859
+    ]
+  ],
+  "training_seconds": 3954.0
+}

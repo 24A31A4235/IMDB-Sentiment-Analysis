@@ -1,6 +1,9 @@
-fastapi
-uvicorn
+gradio
 transformers
 torch
 numpy
+scikit-learn
+accelerate
+fastapi
+uvicorn
 pydantic

@@ -1,92 +1,148 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from transformers import pipeline
+"""IMDB Sentiment Analysis — improved Gradio app (Hugging Face Spaces).
+
+Uses the DistilBERT model fine-tuned on IMDB reviews (see train.py).
+Features:
+- single-review analysis with a confidence breakdown,
+- batch analysis (one review per line) with a results table,
+- model card info (training data, accuracy) shown in the UI.
+
+Model path: set MODEL_PATH, or place the fine-tuned model in
+./model_imdb next to this file. Falls back to the base SST-2 model
+if no fine-tuned model is present.
+"""
+import json
+import os
+
+import gradio as gr
 import numpy as np
+from transformers import pipeline
 
-app = FastAPI()
+HERE = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.environ.get("MODEL_PATH")
+if not MODEL_PATH:
+    MODEL_PATH = (
+        os.path.join(HERE, "model_imdb")
+        if os.path.isdir(os.path.join(HERE, "model_imdb"))
+        else "/home/hatch/workspace/github-code-check/imdb-model"
+    )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-    allow_credentials=False
-)
+METRICS_PATH = os.path.join(HERE, "model_imdb", "metrics.json")
+metrics = {}
+if os.path.isfile(METRICS_PATH):
+    with open(METRICS_PATH) as f:
+        metrics = json.load(f)
 
-classifier = pipeline(
-    "sentiment-analysis",
-    model="distilbert-base-uncased-finetuned-sst-2-english",
-    return_all_scores=True
-)
+classifier = pipeline("sentiment-analysis", model=MODEL_PATH)
 
-class Review(BaseModel):
-    text: str
 
-def get_real_confidence(raw_output):
-    # Flatten whatever structure comes in
-    print("RAW OUTPUT:", raw_output)
-    print("TYPE:", type(raw_output))
+def scores_for(text):
+    """Return (label, pos_score, neg_score) using the raw pipeline output."""
+    raw = classifier(text)
+    if isinstance(raw, list) and raw and isinstance(raw[0], list):
+        raw = raw[0]
+    d = {item["label"]: float(item["score"]) for item in raw}
+    pos, neg = d.get("POSITIVE", 0.0), d.get("NEGATIVE", 0.0)
+    return ("POSITIVE" if pos >= neg else "NEGATIVE"), pos, neg
 
-    # Handle all possible formats
-    if isinstance(raw_output, list):
-        if isinstance(raw_output[0], list):
-            # Double nested list [[{...}, {...}]]
-            scores = raw_output[0]
-        elif isinstance(raw_output[0], dict):
-            # Single list [{...}, {...}]
-            scores = raw_output
-        else:
-            scores = raw_output
-    else:
-        scores = raw_output
 
-    print("SCORES:", scores)
+def temperature_confidence(raw_prob, temperature=2.5):
+    """Same temperature scaling as the original backend (T=2.5)."""
+    p = min(max(raw_prob, 1e-9), 1 - 1e-9)
+    adjusted = 1 / (1 + np.exp(-np.log(p / (1 - p)) / temperature))
+    return round(float(adjusted) * 100, 1)
 
-    # Build score dictionary
-    score_dict = {}
-    for item in scores:
-        score_dict[item["label"]] = item["score"]
 
-    print("SCORE DICT:", score_dict)
-
-    neg_score = score_dict.get("NEGATIVE", 0)
-    pos_score = score_dict.get("POSITIVE", 0)
-
-    if pos_score > neg_score:
-        label = "POSITIVE"
-        raw = pos_score
-    else:
-        label = "NEGATIVE"
-        raw = neg_score
-
-    # Temperature scaling
-    temperature = 2.5
-    adjusted = 1 / (1 + np.exp(-np.log(raw / (1 - raw + 1e-9)) / temperature))
-    confidence = round(float(adjusted) * 100, 1)
-
-    return label, confidence
-
-def get_interpretation(score):
-    if score >= 90:
+def strength(conf):
+    if conf >= 90:
         return "Very strong"
-    elif score >= 75:
+    if conf >= 75:
         return "Strong"
-    elif score >= 60:
+    if conf >= 60:
         return "Moderate"
-    else:
-        return "Weak - borderline review"
+    return "Weak - borderline"
 
-@app.post("/predict")
-def predict(review: Review):
-    raw_output = classifier(review.text[:512])
-    label, confidence = get_real_confidence(raw_output)
-    return {
-        "label": label,
-        "score": confidence,
-        "interpretation": get_interpretation(confidence)
-    }
 
-@app.get("/")
-def root():
-    return {"status": "running"}
+def analyze_one(text):
+    if not text or not text.strip():
+        return "Please enter a review.", None, "", ""
+    label, pos, neg = scores_for(text.strip())
+    raw = pos if label == "POSITIVE" else neg
+    conf = temperature_confidence(raw)
+    chart = {"POSITIVE": round(pos * 100, 1), "NEGATIVE": round(neg * 100, 1)}
+    return label, chart, f"{conf}%", strength(conf)
+
+
+def analyze_batch(text):
+    if not text or not text.strip():
+        return [["(empty)", "", ""]]
+    rows = []
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        label, pos, neg = scores_for(line)
+        raw = pos if label == "POSITIVE" else neg
+        conf = temperature_confidence(raw)
+        rows.append([line[:80], label, f"{conf}% ({strength(conf)})"])
+    return rows
+
+
+acc_line = ""
+if metrics:
+    acc_line = (
+        f"Fine-tuned on {metrics.get('train_size', '?')} IMDB reviews · "
+        f"test accuracy **{metrics.get('accuracy', '?') * 100:.1f}%** · "
+        f"F1 **{metrics.get('f1_weighted', '?')}**"
+    )
+
+with gr.Blocks(title="IMDB Sentiment Analysis") as demo:
+    gr.Markdown("# 🎬 IMDB Sentiment Analysis")
+    gr.Markdown(
+        "A DistilBERT model fine-tuned on real IMDB movie reviews. "
+        "Type a review and it tells you whether it is positive or "
+        f"negative, and how sure it is. {acc_line}"
+    )
+    with gr.Tab("Single review"):
+        inp = gr.Textbox(
+            label="Movie review",
+            placeholder="Type a movie review here...",
+            lines=4,
+        )
+        btn = gr.Button("Analyze", variant="primary")
+        with gr.Row():
+            out_label = gr.Textbox(label="Sentiment")
+            out_conf = gr.Textbox(label="Confidence")
+            out_strength = gr.Textbox(label="Strength")
+        out_chart = gr.Label(label="Score breakdown")
+        btn.click(
+            analyze_one,
+            inputs=inp,
+            outputs=[out_label, out_chart, out_conf, out_strength],
+        )
+        gr.Examples(
+            examples=[
+                ["This movie was absolutely wonderful, I loved every minute of it."],
+                ["Terrible film. Boring, badly acted and a complete waste of time."],
+                ["The plot was slow in the middle, but the ending made it worth watching."],
+            ],
+            inputs=inp,
+        )
+    with gr.Tab("Batch — one review per line"):
+        batch_in = gr.Textbox(
+            label="Reviews (one per line)",
+            placeholder="Great movie, loved it!\nWorst film I have ever seen.",
+            lines=5,
+        )
+        batch_btn = gr.Button("Analyze all", variant="primary")
+        batch_out = gr.Dataframe(
+            headers=["Review", "Sentiment", "Confidence"],
+            label="Results",
+        )
+        batch_btn.click(analyze_batch, inputs=batch_in, outputs=batch_out)
+    gr.Markdown(
+        "Model: DistilBERT fine-tuned on the IMDB dataset (25,000 train / "
+        "25,000 test reviews). Built with Hugging Face Transformers + Gradio."
+    )
+
+if __name__ == "__main__":
+    demo.launch()

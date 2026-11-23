@@ -4,7 +4,8 @@ A movie-review sentiment classifier built by **fine-tuning DistilBERT on the
 IMDB dataset** — not just calling a pre-trained model. Type a review and it
 tells you whether it is positive or negative, how confident it is, and why.
 
-**Live demo:** *(Hugging Face Spaces link — added after deploy)*
+**Live demo:** https://huggingface.co/spaces/Varund88/imdb-sentiment-analysis
+**Model:** https://huggingface.co/Varund88/imdb-sentiment-distilbert
 
 ## What it does
 

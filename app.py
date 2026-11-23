@@ -10,34 +10,61 @@ Model path: set MODEL_PATH, or place the fine-tuned model in
 ./model_imdb next to this file. Falls back to the base SST-2 model
 if no fine-tuned model is present.
 """
+import spaces  # MUST be first: ZeroGPU mode fails if CUDA is
+# initialised (by gradio/torch) before `spaces` is imported.
+
 import json
 import os
 
 import gradio as gr
 import numpy as np
+import torch
 from transformers import pipeline
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.environ.get("MODEL_PATH")
-if not MODEL_PATH:
-    MODEL_PATH = (
-        os.path.join(HERE, "model_imdb")
-        if os.path.isdir(os.path.join(HERE, "model_imdb"))
-        else "/home/hatch/workspace/github-code-check/imdb-model"
-    )
+HF_MODEL = "Varund88/imdb-sentiment-distilbert"
+
+# The Space runs on ZeroGPU (free tier), which only allocates a GPU
+# inside functions decorated with @spaces.GPU. So the model is loaded
+# lazily on first use, inside such a function, and cached afterwards.
+_classifier = None
+
+
+def _get_classifier():
+    global _classifier
+    if _classifier is None:
+        device = 0 if torch.cuda.is_available() else -1
+        model_path = os.environ.get("MODEL_PATH") or HF_MODEL
+        try:
+            _classifier = pipeline(
+                "sentiment-analysis", model=model_path, device=device
+            )
+        except Exception:
+            local = os.path.join(HERE, "model_imdb")
+            fallback = (
+                local
+                if os.path.isdir(local)
+                else "/home/hatch/workspace/github-code-check/imdb-model"
+            )
+            _classifier = pipeline(
+                "sentiment-analysis", model=fallback, device=device
+            )
+    return _classifier
 
 METRICS_PATH = os.path.join(HERE, "model_imdb", "metrics.json")
 metrics = {}
 if os.path.isfile(METRICS_PATH):
     with open(METRICS_PATH) as f:
         metrics = json.load(f)
+else:
+    # Metrics of the fine-tuned model (see model_imdb/metrics.json).
+    metrics = {"train_size": 3000, "accuracy": 0.8575, "f1_weighted": 0.8575}
 
-classifier = pipeline("sentiment-analysis", model=MODEL_PATH)
 
-
+@spaces.GPU
 def scores_for(text):
     """Return (label, pos_score, neg_score) using the raw pipeline output."""
-    raw = classifier(text)
+    raw = _get_classifier()(text)
     if isinstance(raw, list) and raw and isinstance(raw[0], list):
         raw = raw[0]
     d = {item["label"]: float(item["score"]) for item in raw}
@@ -68,7 +95,9 @@ def analyze_one(text):
     label, pos, neg = scores_for(text.strip())
     raw = pos if label == "POSITIVE" else neg
     conf = temperature_confidence(raw)
-    chart = {"POSITIVE": round(pos * 100, 1), "NEGATIVE": round(neg * 100, 1)}
+    # gr.Label expects confidences as fractions (0-1); it renders them
+    # as percentages itself. Passing percentages here made it show 10000%.
+    chart = {"POSITIVE": round(pos, 3), "NEGATIVE": round(neg, 3)}
     return label, chart, f"{conf}%", strength(conf)
 
 
